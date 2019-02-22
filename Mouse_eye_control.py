@@ -4,6 +4,8 @@ import dlib
 from math import hypot
 from pynput.mouse import Button, Controller
 import time
+import pandas as pd
+import numpy as np
  
 cap = cv2.VideoCapture(0)
  
@@ -12,6 +14,14 @@ detector = dlib.get_frontal_face_detector()
 predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
 
 font = cv2.FONT_HERSHEY_PLAIN
+
+def adjust_gamma(image, gamma=1.0):
+
+   invGamma = 1.0 / gamma
+   table = np.array([((i / 255.0) ** invGamma) * 255
+      for i in np.arange(0, 256)]).astype("uint8")
+
+   return cv2.LUT(image, table)
  
 def midpoint(p1 ,p2):
     return int((p1.x + p2.x)/2), int((p1.y + p2.y)/2)
@@ -26,40 +36,10 @@ def get_blinking_ratio(eye_points, facial_landmarks):
  
     ratio = hor_line_lenght / ver_line_lenght
     return ratio
-
-def increase_brightness(img, value=30):
-    img=cv2.cvtColor(img,cv2.COLOR_GRAY2BGR)
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-    lim = 255 - value
-    v[v > lim] = 255
-    v[v <= lim] += value
-    final_hsv = cv2.merge((h, s, v))
-    img = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    return img
  
 def get_gaze_ratio(eye_points, facial_landmarks):
-    left_eye_region = np.array([(facial_landmarks.part(eye_points[0]).x, facial_landmarks.part(eye_points[0]).y),
-                                (facial_landmarks.part(eye_points[1]).x, facial_landmarks.part(eye_points[1]).y),
-                                (facial_landmarks.part(eye_points[2]).x, facial_landmarks.part(eye_points[2]).y),
-                                (facial_landmarks.part(eye_points[3]).x, facial_landmarks.part(eye_points[3]).y),
-                                (facial_landmarks.part(eye_points[4]).x, facial_landmarks.part(eye_points[4]).y),
-                                (facial_landmarks.part(eye_points[5]).x, facial_landmarks.part(eye_points[5]).y)], np.int32)
- 
-    height, width, _ = frame.shape
-    mask = np.zeros((height, width), np.uint8)
-    cv2.polylines(mask, [left_eye_region], True, 255, 2)
-    cv2.fillPoly(mask, [left_eye_region], 255)
-    eye = cv2.bitwise_and(gray, gray, mask=mask)
- 
-    min_x = np.min(left_eye_region[:, 0])
-    max_x = np.max(left_eye_region[:, 0])
-    min_y = np.min(left_eye_region[:, 1])
-    max_y = np.max(left_eye_region[:, 1])
- 
-    gray_eye = eye[min_y: max_y, min_x: max_x]
-    _, threshold_eye = cv2.threshold(gray_eye, 70, 255, cv2.THRESH_BINARY)
+    gray_eye,color_eye=eye_seting(eye_points, facial_landmarks)
+    _, threshold_eye = cv2.threshold(gray_eye, 100, 255, cv2.THRESH_BINARY)
     
     height, width = threshold_eye.shape
     left_side_threshold = threshold_eye[0: height, 0: width // 2]
@@ -76,6 +56,26 @@ def get_gaze_ratio(eye_points, facial_landmarks):
     return gaze_ratio,left_side_white,right_side_white
 
 def get_up_down(eye_points, facial_landmarks):
+    gray_eye,color_eye=eye_seting(eye_points, facial_landmarks)
+
+    _, threshold_eye = cv2.threshold(gray_eye, 70, 255, cv2.THRESH_BINARY)
+    _, threshold_color_eye = cv2.threshold(color_eye, 70, 255, cv2.THRESH_BINARY)
+    gray_thresh = cv2.cvtColor(threshold_color_eye, cv2.COLOR_BGR2GRAY)
+    _, threshold_color_eye2 = cv2.threshold(gray_thresh, 250, 255, cv2.THRESH_BINARY)
+    
+    summ = cv2.countNonZero(threshold_eye)
+    summ_color=cv2.countNonZero(threshold_color_eye2)
+    height, width = threshold_eye.shape
+    up_side_threshold = threshold_eye[0: height//2, 0: width]
+    up_side_threshold_color = threshold_color_eye2[height//5: int(height/(1.5)), width//(4): int(width//(1.5))]
+    value=cv2.countNonZero( up_side_threshold_color)
+    up_side_white = cv2.countNonZero(up_side_threshold)
+    down_side_threshold = threshold_eye[height//2: height, 0: width]
+    down_side_white = cv2.countNonZero(down_side_threshold)
+    cv2.imshow("Threshold_gray", threshold_color_eye)
+    return summ,up_side_white,down_side_white,value,summ_color
+
+def eye_seting(eye_points, facial_landmarks):
     eye_region = np.array([(facial_landmarks.part(eye_points[0]).x, facial_landmarks.part(eye_points[0]).y),
                                 (facial_landmarks.part(eye_points[1]).x, facial_landmarks.part(eye_points[1]).y),
                                 (facial_landmarks.part(eye_points[2]).x, facial_landmarks.part(eye_points[2]).y),
@@ -97,30 +97,16 @@ def get_up_down(eye_points, facial_landmarks):
  
     gray_eye = eye[min_y: max_y, min_x: max_x]
     color_eye=color_eye[min_y: max_y, min_x: max_x]
-    _, threshold_eye = cv2.threshold(gray_eye, 70, 255, cv2.THRESH_BINARY)
-    _, threshold_color_eye = cv2.threshold(color_eye, 33, 255, cv2.THRESH_BINARY)
-    gray_thresh = cv2.cvtColor(threshold_color_eye, cv2.COLOR_BGR2GRAY)
-    _, threshold_color_eye2 = cv2.threshold(gray_thresh, 250, 255, cv2.THRESH_BINARY)
-    
-    summ = cv2.countNonZero(threshold_eye)
-    summ_color=cv2.countNonZero(threshold_color_eye2)
-    height, width = threshold_eye.shape
-    up_side_threshold = threshold_eye[0: height//2, 0: width]
-    up_side_threshold_color = threshold_color_eye2[height//5: int(height/(1.5)), width//(4): int(width//(1.5))]
-    value=cv2.countNonZero( up_side_threshold_color)
-    up_side_white = cv2.countNonZero(up_side_threshold)
-    down_side_threshold = threshold_eye[height//2: height, 0: width]
-    down_side_white = cv2.countNonZero(down_side_threshold)
-    cv2.imshow("Threshold", threshold_eye)
-    return summ,up_side_white,down_side_white,value,summ_color
-    
+    return gray_eye,color_eye
+
 cont=0
 start=0
 end=0
 while True:
     _, frame = cap.read()
     new_frame = np.zeros((500, 500, 3), np.uint8)
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(adjust_gamma(frame,1.1), cv2.COLOR_BGR2GRAY)
+    gamma_adjusted=adjust_gamma(frame,1.5)
     faces = detector(gray)
     for face in faces:
         if len(faces)==1:
@@ -177,6 +163,7 @@ while True:
                 
     cv2.imshow("Frame", frame)
     cv2.imshow("New frame", new_frame)
+    cv2.imshow("Gamma_adjusted", gamma_adjusted)
     key = cv2.waitKey(1)
     if key == 113:
         break
